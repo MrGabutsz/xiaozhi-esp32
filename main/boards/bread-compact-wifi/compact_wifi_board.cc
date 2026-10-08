@@ -102,33 +102,28 @@ private:
 
     void InitializeButtons() {
         // ========================================================
-        // FULL VOICE & SYSTEM CONTROL VIA TOUCH SENSOR (TTP223)
+        // SENSOR SENTUH TTP223 - KHUSUS PUSH-TO-TALK & MUTE AI
         // ========================================================
-
-        // 1. Tekan & Tahan: Langsung merekam input suara user (Push-to-Talk)
         touch_button_.OnPressDown([this]() {
             Application::GetInstance().StartListening();
         });
 
-        // 2. Lepas Sentuhan: Selesai bicara & langsung kirim audio ke AI
         touch_button_.OnPressUp([this]() {
             Application::GetInstance().StopListening();
         });
 
-        // 3. Sentuh Sekali (Tap):
-        //    - Saat baru nyala (Booting): Masuk ke Mode Konfigurasi Wi-Fi
-        //    - Saat AI sedang bicara: Langsung memotong/menginterupsi pembicaraan AI
-        touch_button_.OnClick([this]() {
+        // ========================================================
+        // TOMBOL FISIK BOOT - KHUSUS WIFI CONFIG
+        // ========================================================
+        boot_button_.OnClick([this]() {
             auto& app = Application::GetInstance();
             if (app.GetDeviceState() == kDeviceStateStarting) {
                 EnterWifiConfigMode();
-                return;
             }
-            app.ToggleChatState();
         });
 
         // ========================================================
-        // KONTROL VOLUME (Tetap aktif jika tombol fisik dipasang)
+        // KONTROL VOLUME
         // ========================================================
         volume_up_button_.OnClick([this]() {
             auto codec = GetAudioCodec();
@@ -157,7 +152,6 @@ private:
         });
     }
 
-    // 物联网初始化，逐步迁移到 MCP 协议
     void InitializeTools() {
         static LampController lamp(LAMP_GPIO);
     }
@@ -165,7 +159,7 @@ private:
 public:
     CompactWifiBoard() :
         boot_button_(BOOT_BUTTON_GPIO),
-        touch_button_(TOUCH_BUTTON_GPIO),
+        touch_button_(TOUCH_BUTTON_GPIO, true), 
         volume_up_button_(VOLUME_UP_BUTTON_GPIO),
         volume_down_button_(VOLUME_DOWN_BUTTON_GPIO) {
         InitializeDisplayI2c();
