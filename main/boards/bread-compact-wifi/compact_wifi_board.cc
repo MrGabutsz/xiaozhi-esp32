@@ -101,7 +101,24 @@ private:
     }
 
     void InitializeButtons() {
-        boot_button_.OnClick([this]() {
+        // ========================================================
+        // FULL VOICE & SYSTEM CONTROL VIA TOUCH SENSOR (TTP223)
+        // ========================================================
+
+        // 1. Tekan & Tahan: Langsung merekam input suara user (Push-to-Talk)
+        touch_button_.OnPressDown([this]() {
+            Application::GetInstance().StartListening();
+        });
+
+        // 2. Lepas Sentuhan: Selesai bicara & langsung kirim audio ke AI
+        touch_button_.OnPressUp([this]() {
+            Application::GetInstance().StopListening();
+        });
+
+        // 3. Sentuh Sekali (Tap):
+        //    - Saat baru nyala (Booting): Masuk ke Mode Konfigurasi Wi-Fi
+        //    - Saat AI sedang bicara: Langsung memotong/menginterupsi pembicaraan AI
+        touch_button_.OnClick([this]() {
             auto& app = Application::GetInstance();
             if (app.GetDeviceState() == kDeviceStateStarting) {
                 EnterWifiConfigMode();
@@ -109,19 +126,14 @@ private:
             }
             app.ToggleChatState();
         });
-        touch_button_.OnPressDown([this]() {
-            Application::GetInstance().StartListening();
-        });
-        touch_button_.OnPressUp([this]() {
-            Application::GetInstance().StopListening();
-        });
 
+        // ========================================================
+        // KONTROL VOLUME (Tetap aktif jika tombol fisik dipasang)
+        // ========================================================
         volume_up_button_.OnClick([this]() {
             auto codec = GetAudioCodec();
             auto volume = codec->output_volume() + 10;
-            if (volume > 100) {
-                volume = 100;
-            }
+            if (volume > 100) volume = 100;
             codec->SetOutputVolume(volume);
             GetDisplay()->ShowNotification(Lang::Strings::VOLUME + std::to_string(volume));
         });
@@ -134,9 +146,7 @@ private:
         volume_down_button_.OnClick([this]() {
             auto codec = GetAudioCodec();
             auto volume = codec->output_volume() - 10;
-            if (volume < 0) {
-                volume = 0;
-            }
+            if (volume < 0) volume = 0;
             codec->SetOutputVolume(volume);
             GetDisplay()->ShowNotification(Lang::Strings::VOLUME + std::to_string(volume));
         });
