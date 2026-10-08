@@ -9,7 +9,7 @@
 #include "lamp_controller.h"
 #include "led/single_led.h"
 #include "assets/lang_config.h"
-//test
+
 #include <esp_log.h>
 #include <driver/i2c_master.h>
 #include <esp_lcd_panel_ops.h>
@@ -181,6 +181,10 @@ public:
         static NoAudioCodecDuplex audio_codec(AUDIO_INPUT_SAMPLE_RATE, AUDIO_OUTPUT_SAMPLE_RATE,
             AUDIO_I2S_GPIO_BCLK, AUDIO_I2S_GPIO_WS, AUDIO_I2S_GPIO_DOUT, AUDIO_I2S_GPIO_DIN);
 #endif
+        
+        // Mengurangi sensitivitas gain mikrofon menjadi 3.0
+        audio_codec.SetInputGain(3.0); 
+
         return &audio_codec;
     }
 
