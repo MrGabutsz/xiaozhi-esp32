@@ -33,8 +33,9 @@
 
 #define BUILTIN_LED_GPIO        GPIO_NUM_48
 // --- UBAH: Pin Sensor Sentuh TTP223 ---
-#define BOOT_BUTTON_GPIO        GPIO_NUM_4  // Awalnya 0, diubah ke 4 untuk TTP223
-#define TOUCH_BUTTON_GPIO       -1          // Dimatikan (-1) agar tidak bentrok
+// --- UBAH: Pin Sensor Sentuh TTP223 ---
+#define BOOT_BUTTON_GPIO        GPIO_NUM_0  // Kembalikan ke tombol Boot bawaan ESP32
+#define TOUCH_BUTTON_GPIO       GPIO_NUM_4  // Aktifkan sensor sentuh TTP223 di sini// Dimatikan (-1) agar tidak bentrok
 #define VOLUME_UP_BUTTON_GPIO   GPIO_NUM_40
 #define VOLUME_DOWN_BUTTON_GPIO GPIO_NUM_39
 
