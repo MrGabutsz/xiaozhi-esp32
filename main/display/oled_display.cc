@@ -2,7 +2,6 @@
 #include "assets/lang_config.h"
 #include "lvgl_font.h"
 #include "lvgl_theme.h"
-#include "settings.h"
 
 #include <algorithm>
 #include <string>
@@ -10,15 +9,19 @@
 #include <esp_err.h>
 #include <esp_log.h>
 #include <esp_lvgl_port.h>
-#include <material_symbols.h>
-#include <noto_emoji.h>
+#include <font_awesome.h>
+#include <lvgl.h>
 
 #define TAG "OledDisplay"
 
 LV_FONT_DECLARE(BUILTIN_TEXT_FONT);
 LV_FONT_DECLARE(BUILTIN_ICON_FONT);
-LV_FONT_DECLARE(font_material_symbols_30_1);
-LV_FONT_DECLARE(font_noto_emoji_30_1);
+LV_FONT_DECLARE(font_awesome_30_1);
+
+uint32_t speak_last_update_ = 0;
+int speak_mouth_target_ = 4;
+int speak_mouth_current_ = 4;
+int eye_size = 20;
 
 OledDisplay::OledDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handle_t panel,
                          int width, int height, bool mirror_x, bool mirror_y)
@@ -28,14 +31,12 @@ OledDisplay::OledDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handl
 
     auto text_font = std::make_shared<LvglBuiltInFont>(&BUILTIN_TEXT_FONT);
     auto icon_font = std::make_shared<LvglBuiltInFont>(&BUILTIN_ICON_FONT);
-    auto large_icon_font = std::make_shared<LvglBuiltInFont>(&font_material_symbols_30_1);
-    auto emoji_font = std::make_shared<LvglBuiltInFont>(&font_noto_emoji_30_1);
+    auto large_icon_font = std::make_shared<LvglBuiltInFont>(&font_awesome_30_1);
 
     auto dark_theme = new LvglTheme("dark");
     dark_theme->set_text_font(text_font);
     dark_theme->set_icon_font(icon_font);
     dark_theme->set_large_icon_font(large_icon_font);
-    dark_theme->set_emoji_font(emoji_font);
 
     auto& theme_manager = LvglThemeManager::GetInstance();
     theme_manager.RegisterTheme("dark", dark_theme);
@@ -83,23 +84,18 @@ OledDisplay::OledDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handl
         return;
     }
 
-    // Note: SetupUI() should be called by Application::Initialize(), not in constructor
-    // to ensure lvgl objects are created after the display is fully initialized.
-}
-
-void OledDisplay::SetupUI() {
-    // Prevent duplicate calls - if already called, return early
-    if (setup_ui_called_) {
-        ESP_LOGW(TAG, "SetupUI() called multiple times, skipping duplicate call");
-        return;
-    }
-
-    Display::SetupUI();  // Mark SetupUI as called
     if (height_ == 64) {
         SetupUI_128x64();
     } else {
         SetupUI_128x32();
     }
+
+    lv_timer_create(
+        [](lv_timer_t* t) {
+            auto self = static_cast<OledDisplay*>(lv_timer_get_user_data(t));
+            self->UpdateFace();
+        },
+        60, this);  // ~16 FPS
 }
 
 OledDisplay::~OledDisplay() {
@@ -146,8 +142,10 @@ bool OledDisplay::Lock(int timeout_ms) { return lvgl_port_lock(timeout_ms); }
 
 void OledDisplay::Unlock() { lvgl_port_unlock(); }
 
+void OledDisplay::SetFaceState(FaceState state) { face_state_ = state; }
+
 void OledDisplay::SetChatMessage(const char* role, const char* content) {
-    DisplayLockGuard lock(this);
+    /* DisplayLockGuard lock(this);
     if (chat_message_label_ == nullptr) {
         return;
     }
@@ -156,7 +154,6 @@ void OledDisplay::SetChatMessage(const char* role, const char* content) {
     std::string content_str = content;
     std::replace(content_str.begin(), content_str.end(), '\n', ' ');
 
-    lv_anim_delete(chat_message_label_, nullptr);
     if (content_right_ == nullptr) {
         lv_label_set_text(chat_message_label_, content_str.c_str());
     } else {
@@ -166,6 +163,132 @@ void OledDisplay::SetChatMessage(const char* role, const char* content) {
             lv_label_set_text(chat_message_label_, content_str.c_str());
             lv_obj_remove_flag(content_right_, LV_OBJ_FLAG_HIDDEN);
         }
+    } */
+}
+
+void OledDisplay::IdleBehavior(int base_eye_height) {
+    // Random subtle movement
+    if (rand() % 40 == 0) {
+        idle_move_offset_x_ = (rand() % 5) - 2;
+        idle_move_offset_y_ = (rand() % 3) - 1;
+    }
+
+    int eye_h = base_eye_height;
+    int eye_w = eye_h * 0.65;  // slightly oval
+
+    lv_obj_set_size(left_eye_, eye_w, eye_h);
+    lv_obj_set_size(right_eye_, eye_w, eye_h);
+
+    lv_obj_align(left_eye_, LV_ALIGN_CENTER, -12 + idle_move_offset_x_, -5 + idle_move_offset_y_);
+    lv_obj_align(right_eye_, LV_ALIGN_CENTER, 12 + idle_move_offset_x_, -5 + idle_move_offset_y_);
+
+    // Mouth relaxed
+    lv_obj_set_size(mouth_, 14, 3);
+    lv_obj_align(mouth_, LV_ALIGN_CENTER, idle_move_offset_x_, 10 + idle_move_offset_y_);
+}
+
+void OledDisplay::ListeningBehavior(int base_eye_height) {
+    int right_h = base_eye_height;
+    int right_w = right_h * 0.65;  // slightly oval
+
+    int left_h = base_eye_height - 2;
+    int left_w = left_h * 0.65;  // slightly oval
+
+    lv_obj_set_size(left_eye_, left_w, left_h);
+    lv_obj_set_size(right_eye_, right_w, right_h);
+
+    // Shift whole face slightly left
+    lv_obj_align(left_eye_, LV_ALIGN_CENTER, -16, -5);
+    lv_obj_align(right_eye_, LV_ALIGN_CENTER, 4, -5);
+
+    // Mouth smaller
+    lv_obj_set_size(mouth_, 10, 2);
+    lv_obj_align(mouth_, LV_ALIGN_CENTER, -4, 10);
+}
+
+void OledDisplay::SpeakingBehavior(int eye_height) {
+    uint32_t now = lv_tick_get();
+
+    // --- EYES ---
+    lv_obj_set_size(left_eye_, eye_height* 0.65, eye_height);
+    lv_obj_set_size(right_eye_, eye_height* 0.65, eye_height);
+
+    lv_obj_align(left_eye_, LV_ALIGN_CENTER, -30, -6);
+    lv_obj_align(right_eye_, LV_ALIGN_CENTER, 30, -6);
+
+    // --- MOUTH TIMING ---
+    if (now - speak_last_update_ > 90 + (rand() % 60)) {
+        speak_last_update_ = now;
+
+        // simulate syllables
+        int r = rand() % 100;
+
+        if (r < 20)
+            speak_mouth_target_ = 2;  // closed
+        else if (r < 50)
+            speak_mouth_target_ = 6;  // small
+        else if (r < 80)
+            speak_mouth_target_ = 10;  // medium
+        else
+            speak_mouth_target_ = 16;  // wide
+    }
+
+    // --- SMOOTH TRANSITION ---
+    if (speak_mouth_current_ < speak_mouth_target_)
+        speak_mouth_current_ += 2;
+    else if (speak_mouth_current_ > speak_mouth_target_)
+        speak_mouth_current_ -= 2;
+
+    // --- APPLY MOUTH ---
+    lv_obj_set_size(mouth_, 15, speak_mouth_current_);
+    lv_obj_set_style_radius(mouth_, 8, 0);
+    lv_obj_align(mouth_, LV_ALIGN_CENTER, 0, 18);
+}
+
+void OledDisplay::UpdateFace() {
+    DisplayLockGuard lock(this);
+
+    // --- Random blink trigger ---
+    if (blink_phase_ == 0) {
+        if (rand() % 120 == 0) {  // random blink
+            blink_phase_ = 1;
+        }
+    }
+
+    // --- Blink state machine ---
+    int eye_height = eye_size;
+
+    switch (blink_phase_) {
+        case 1:  // closing
+            eye_height = 4;
+            blink_phase_ = 2;
+            break;
+        case 2:  // closed
+            eye_height = 1;
+            blink_phase_ = 3;
+            break;
+        case 3:  // opening
+            eye_height = 6;
+            blink_phase_ = 0;
+            break;
+        default:
+            eye_height = eye_size;
+            break;
+    }
+
+    // --- State-specific behavior ---
+    switch (face_state_) {
+        case FaceState::Idle:
+            IdleBehavior(eye_height);
+            break;
+
+        case FaceState::Listening:
+            ListeningBehavior(eye_height);
+            break;
+
+        case FaceState::Speaking:
+            SpeakingBehavior(eye_height);
+            break;
     }
 }
 
@@ -253,22 +376,53 @@ void OledDisplay::SetupUI_128x64() {
     lv_obj_set_style_radius(content_, 0, 0);
     lv_obj_set_style_pad_all(content_, 0, 0);
     lv_obj_set_width(content_, LV_HOR_RES);
+    lv_obj_set_size(content_, 128, 48);
     lv_obj_set_flex_grow(content_, 1);
-    lv_obj_set_flex_flow(content_, LV_FLEX_FLOW_ROW);
-    lv_obj_set_style_flex_main_place(content_, LV_FLEX_ALIGN_CENTER, 0);
 
-    content_left_ = lv_obj_create(content_);
-    lv_obj_set_size(content_left_, 32, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(content_, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(content_, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+
+    /* content_left_ = lv_obj_create(content_);
+    lv_obj_set_size(content_left_, 128, LV_SIZE_CONTENT);
     lv_obj_set_style_pad_all(content_left_, 0, 0);
     lv_obj_set_style_border_width(content_left_, 0, 0);
 
-    emotion_label_ = lv_label_create(content_left_);
+     emotion_label_ = lv_label_create(content_left_);
     lv_obj_set_style_text_font(emotion_label_, large_icon_font, 0);
-    lv_label_set_text(emotion_label_, MATERIAL_SYMBOLS_ROBOT_2);
+    lv_label_set_text(emotion_label_, FONT_AWESOME_MICROCHIP_AI);
     lv_obj_center(emotion_label_);
-    lv_obj_set_style_pad_top(emotion_label_, 8, 0);
+    lv_obj_set_style_pad_top(emotion_label_, 8, 0); */
 
-    content_right_ = lv_obj_create(content_);
+    face_container_ = lv_obj_create(content_);
+    lv_obj_set_size(face_container_, 128, 48);
+    lv_obj_set_style_border_width(face_container_, 0, 0);
+    lv_obj_set_style_bg_opa(face_container_, LV_OPA_TRANSP, 0);
+
+    left_eye_ = lv_obj_create(face_container_);
+    right_eye_ = lv_obj_create(face_container_);
+
+    lv_obj_set_style_bg_color(left_eye_, lv_color_black(), 0);
+    lv_obj_set_style_bg_color(right_eye_, lv_color_black(), 0);
+
+    lv_obj_set_style_border_width(left_eye_, 0, 0);
+    lv_obj_set_style_border_width(right_eye_, 0, 0);
+
+    lv_obj_set_size(left_eye_, eye_size, eye_size);
+    lv_obj_set_size(right_eye_, eye_size, eye_size);
+
+    lv_obj_align(left_eye_, LV_ALIGN_CENTER, -30, -4);
+    lv_obj_align(right_eye_, LV_ALIGN_CENTER, 30, -4);
+
+    lv_obj_set_style_radius(left_eye_, 2, 0);
+    lv_obj_set_style_radius(right_eye_, 2, 0);
+
+    mouth_ = lv_obj_create(face_container_);
+    lv_obj_set_style_bg_color(mouth_, lv_color_black(), 0);
+    lv_obj_set_style_border_width(mouth_, 0, 0);
+    lv_obj_set_style_radius(mouth_, 4, 0);
+
+    /* content_right_ = lv_obj_create(content_);
     lv_obj_set_size(content_right_, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
     lv_obj_set_style_pad_all(content_right_, 0, 0);
     lv_obj_set_style_border_width(content_right_, 0, 0);
@@ -289,7 +443,7 @@ void OledDisplay::SetupUI_128x64() {
     lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
     lv_obj_set_style_anim(chat_message_label_, &a, LV_PART_MAIN);
     lv_obj_set_style_anim_duration(chat_message_label_, lv_anim_speed_clamped(60, 300, 60000),
-                                   LV_PART_MAIN);
+                                   LV_PART_MAIN);*/
 
     low_battery_popup_ = lv_obj_create(screen);
     lv_obj_set_scrollbar_mode(low_battery_popup_, LV_SCROLLBAR_MODE_OFF);
@@ -332,7 +486,7 @@ void OledDisplay::SetupUI_128x32() {
 
     emotion_label_ = lv_label_create(content_);
     lv_obj_set_style_text_font(emotion_label_, large_icon_font, 0);
-    lv_label_set_text(emotion_label_, MATERIAL_SYMBOLS_ROBOT_2);
+    lv_label_set_text(emotion_label_, FONT_AWESOME_MICROCHIP_AI);
     lv_obj_center(emotion_label_);
 
     /* Right side */
@@ -393,24 +547,18 @@ void OledDisplay::SetupUI_128x32() {
 }
 
 void OledDisplay::SetEmotion(const char* emotion) {
-    auto lvgl_theme = static_cast<LvglTheme*>(current_theme_);
-    const char* utf8 = noto_emoji_get_utf8(emotion);
-    const lv_font_t* emotion_font = lvgl_theme->emoji_font()->font();
-    if (utf8 == nullptr) {
-        utf8 = material_symbols_get_utf8(emotion);
-        emotion_font = lvgl_theme->large_icon_font()->font();
-    }
+    /* const char* utf8 = font_awesome_get_utf8(emotion);
     DisplayLockGuard lock(this);
     if (emotion_label_ == nullptr) {
         return;
     }
+    ESP_LOGW(TAG, "Setting emotion label to: %s", emotion);
+
     if (utf8 != nullptr) {
-        lv_obj_set_style_text_font(emotion_label_, emotion_font, 0);
         lv_label_set_text(emotion_label_, utf8);
     } else {
-        lv_obj_set_style_text_font(emotion_label_, lvgl_theme->emoji_font()->font(), 0);
-        lv_label_set_text(emotion_label_, NOTO_EMOJI_NEUTRAL);
-    }
+        lv_label_set_text(emotion_label_, FONT_AWESOME_NEUTRAL);
+    } */
 }
 
 void OledDisplay::SetTheme(Theme* theme) {
@@ -421,14 +569,4 @@ void OledDisplay::SetTheme(Theme* theme) {
 
     auto screen = lv_screen_active();
     lv_obj_set_style_text_font(screen, text_font, 0);
-}
-
-void OledDisplay::SetPowerSaveMode(bool on) {
-    if (panel_) {
-        Settings settings("wifi", false);
-        if (settings.GetBool("power_save_display_off", false)) {
-            esp_lcd_panel_disp_on_off(panel_, !on);
-        }
-    }
-    LvglDisplay::SetPowerSaveMode(on);
 }

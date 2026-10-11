@@ -1,13 +1,12 @@
 #include "circular_strip.h"
 #include "application.h"
 #include <esp_log.h>
-#include <algorithm>
 
 #define TAG "CircularStrip"
 
 #define BLINK_INFINITE -1
 
-CircularStrip::CircularStrip(gpio_num_t gpio, uint16_t max_leds) : max_leds_(max_leds) {
+CircularStrip::CircularStrip(gpio_num_t gpio, uint8_t max_leds) : max_leds_(max_leds) {
     // If the gpio is not connected, you should use NoLed class
     assert(gpio != GPIO_NUM_NC);
 
@@ -67,24 +66,13 @@ void CircularStrip::SetSingleColor(uint8_t index, StripColor color) {
     led_strip_refresh(led_strip_);
 }
 
-void CircularStrip::SetMultiColors(const std::vector<StripColor>& colors) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    esp_timer_stop(strip_timer_);
-    int count = std::min(max_leds_, static_cast<int>(colors.size()));
-    for (int i = 0; i < count; i++) {
-        colors_[i] = colors[i];
-        led_strip_set_pixel(led_strip_, i, colors[i].red, colors[i].green, colors[i].blue);
-    }
-    led_strip_refresh(led_strip_);
-}
-
 void CircularStrip::Blink(StripColor color, int interval_ms) {
     for (int i = 0; i < max_leds_; i++) {
         colors_[i] = color;
     }
-    blink_on_ = true;
     StartStripTask(interval_ms, [this]() {
-        if (blink_on_) {
+        static bool on = true;
+        if (on) {
             for (int i = 0; i < max_leds_; i++) {
                 led_strip_set_pixel(led_strip_, i, colors_[i].red, colors_[i].green, colors_[i].blue);
             }
@@ -92,7 +80,7 @@ void CircularStrip::Blink(StripColor color, int interval_ms) {
         } else {
             led_strip_clear(led_strip_);
         }
-        blink_on_ = !blink_on_;
+        on = !on;
     });
 }
 
@@ -118,24 +106,39 @@ void CircularStrip::FadeOut(int interval_ms) {
 }
 
 void CircularStrip::Breathe(StripColor low, StripColor high, int interval_ms) {
-    breathe_up_    = true;
-    breathe_color_ = low;
     StartStripTask(interval_ms, [this, low, high]() {
-        if (breathe_up_) {
-            if (breathe_color_.red   < high.red)   breathe_color_.red++;
-            if (breathe_color_.green < high.green) breathe_color_.green++;
-            if (breathe_color_.blue  < high.blue)  breathe_color_.blue++;
-            if (breathe_color_.red == high.red && breathe_color_.green == high.green && breathe_color_.blue == high.blue)
-                breathe_up_ = false;
+        static bool increase = true;
+        static StripColor color = low;
+        if (increase) {
+            if (color.red < high.red) {
+                color.red++;
+            }
+            if (color.green < high.green) {
+                color.green++;
+            }
+            if (color.blue < high.blue) {
+                color.blue++;
+            }
+            if (color.red == high.red && color.green == high.green && color.blue == high.blue) {
+                increase = false;
+            }
         } else {
-            if (breathe_color_.red   > low.red)   breathe_color_.red--;
-            if (breathe_color_.green > low.green) breathe_color_.green--;
-            if (breathe_color_.blue  > low.blue)  breathe_color_.blue--;
-            if (breathe_color_.red == low.red && breathe_color_.green == low.green && breathe_color_.blue == low.blue)
-                breathe_up_ = true;
+            if (color.red > low.red) {
+                color.red--;
+            }
+            if (color.green > low.green) {
+                color.green--;
+            }
+            if (color.blue > low.blue) {
+                color.blue--;
+            }
+            if (color.red == low.red && color.green == low.green && color.blue == low.blue) {
+                increase = true;
+            }
         }
-        for (int i = 0; i < max_leds_; i++)
-            led_strip_set_pixel(led_strip_, i, breathe_color_.red, breathe_color_.green, breathe_color_.blue);
+        for (int i = 0; i < max_leds_; i++) {
+            led_strip_set_pixel(led_strip_, i, color.red, color.green, color.blue);
+        }
         led_strip_refresh(led_strip_);
     });
 }
@@ -144,9 +147,8 @@ void CircularStrip::Scroll(StripColor low, StripColor high, int length, int inte
     for (int i = 0; i < max_leds_; i++) {
         colors_[i] = low;
     }
-    scroll_offset_ = 0;
     StartStripTask(interval_ms, [this, low, high, length]() {
-        int offset = scroll_offset_;
+        static int offset = 0;
         for (int i = 0; i < max_leds_; i++) {
             colors_[i] = low;
         }
@@ -158,7 +160,7 @@ void CircularStrip::Scroll(StripColor low, StripColor high, int length, int inte
             led_strip_set_pixel(led_strip_, i, colors_[i].red, colors_[i].green, colors_[i].blue);
         }
         led_strip_refresh(led_strip_);
-        scroll_offset_ = (offset + 1) % max_leds_;
+        offset = (offset + 1) % max_leds_;
     });
 }
 
@@ -209,8 +211,7 @@ void CircularStrip::OnStateChanged() {
             SetAllColor(color);
             break;
         }
-        case kDeviceStateSpeaking:
-        case kDeviceStateNotifying: {
+        case kDeviceStateSpeaking: {
             StripColor color = { low_brightness_, default_brightness_, low_brightness_ };
             SetAllColor(color);
             break;
@@ -230,3 +231,4 @@ void CircularStrip::OnStateChanged() {
             return;
     }
 }
+

@@ -236,7 +236,6 @@ void GpioLed::OnStateChanged() {
             StartFadeTask();
             break;
         case kDeviceStateSpeaking:
-        case kDeviceStateNotifying:
             SetBrightness(SPEAKING_BRIGHTNESS);
             TurnOn();
             break;
